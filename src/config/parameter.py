@@ -114,6 +114,9 @@ class Parameter:
         timeout=10,
         douyin_platform=True,
         tiktok_platform=True,
+        transcribe=False,
+        transcription_model="small",
+        transcription_language="",
         **kwargs,
     ):
         self.settings = settings
@@ -176,6 +179,9 @@ class Parameter:
         self.static_cover = self.check_bool_false(static_cover)
         self.twc_tiktok = self.check_str(twc_tiktok)
         self.download = self.check_bool_true(download)
+        self.transcribe = self.check_bool_false(transcribe)
+        self.transcription_model = self.check_str(transcription_model) or "small"
+        self.transcription_language = self.check_str(transcription_language)
         self.max_size = self.__check_max_size(max_size)
         self.chunk = self.__check_chunk(chunk)
         self.timeout = self.__check_timeout(timeout)
@@ -256,6 +262,9 @@ class Parameter:
             "static_cover": self.check_bool_false,
             "twc_tiktok": self.check_str,
             "download": self.check_bool_true,
+            "transcribe": self.check_bool_false,
+            "transcription_model": lambda value: self.check_str(value) or "small",
+            "transcription_language": self.check_str,
             "max_size": self.__check_max_size,
             "chunk": self.__check_chunk,
             "timeout": self.__check_timeout,
@@ -876,6 +885,9 @@ class Parameter:
             "proxy_tiktok": self.proxy_tiktok,
             "twc_tiktok": self.twc_tiktok,
             "download": self.download,
+            "transcribe": self.transcribe,
+            "transcription_model": self.transcription_model,
+            "transcription_language": self.transcription_language,
             "max_size": self.max_size,
             "chunk": self.chunk,
             "max_retry": self.max_retry,
@@ -883,45 +895,68 @@ class Parameter:
             "run_command": " ".join(self.run_command[::-1]),
             "ffmpeg": self.ffmpeg.path or "",
             "original_quality": self.original_quality,
+            "timeout": self.timeout,
+            "live_qualities": self.live_qualities,
+            "douyin_platform": self.douyin_platform,
+            "tiktok_platform": self.tiktok_platform,
+        }
+
+    def get_settings_file_data(self) -> dict:
+        """返回可直接写回 settings.json 的完整配置。"""
+        return {
+            **self.get_settings_data(),
+            "browser_info": {
+                "impersonate": self.impersonate,
+                **self.browser_info,
+            },
+            "browser_info_tiktok": {
+                "impersonate": self.impersonate_tiktok,
+                **self.browser_info_tiktok,
+            },
         }
 
     async def set_settings_data(
         self,
         data: dict,
     ) -> None:
+        # 保留原始请求键，写回配置文件时只更新本次提交的参数
+        provided = dict(data)
         self.set_urls_params(
-            data.pop("accounts_urls"),
-            data.pop("mix_urls"),
-            data.pop("owner_url"),
-            data.pop("accounts_urls_tiktok"),
-            data.pop("mix_urls_tiktok"),
-            data.pop("owner_url_tiktok"),
+            data.pop("accounts_urls", None),
+            data.pop("mix_urls", None),
+            data.pop("owner_url", None),
+            data.pop("accounts_urls_tiktok", None),
+            data.pop("mix_urls_tiktok", None),
+            data.pop("owner_url_tiktok", None),
         )
         self.set_cookie(
-            data.pop(
-                "cookie",
-            ),
-            data.pop(
-                "cookie_tiktok",
-            ),
+            data.pop("cookie", None),
+            data.pop("cookie_tiktok", None),
         )
-        self.set_browser_info(
-            data.pop(
-                "browser_info",
-            ),
-            data.pop(
-                "browser_info_tiktok",
-            ),
-        )
-        await self.set_proxy(
-            data.pop(
-                "proxy",
-            ),
-            data.pop(
-                "proxy_tiktok",
-            ),
-        )
+        browser_info = data.pop("browser_info", None)
+        browser_info_tiktok = data.pop("browser_info_tiktok", None)
+        if browser_info or browser_info_tiktok:
+            self.set_browser_info(
+                browser_info or {},
+                browser_info_tiktok or {},
+            )
+        proxy = data.pop("proxy", None)
+        proxy_tiktok = data.pop("proxy_tiktok", None)
         self.set_general_params(data)
+        # 代理与网络客户端在 set_general_params 之后重建，
+        # 这样修改 timeout / 平台开关也能立即生效
+        await self.set_proxy(
+            proxy,
+            proxy_tiktok,
+        )
+        self.set_headers_cookie()
+        # 将本次提交的参数写回 settings.json，避免只改内存、重启后丢失
+        stored = dict(self.settings.read())
+        current = self.get_settings_file_data()
+        for key in provided:
+            if key in current:
+                stored[key] = current[key]
+        self.settings.update(stored)
 
     async def __update_cookie_data(self, data: dict) -> None:
         for i, j in zip(("cookie", "cookie_tiktok"), (_("抖音"), "TikTok")):
@@ -993,8 +1028,8 @@ class Parameter:
 
     def set_general_params(self, data: dict[str, Any]) -> None:
         for i, j in data.items():
-            if j is not None:
-                self.__CHECK[i](j)
+            if j is not None and i in self.__CHECK:
+                setattr(self, i, self.__CHECK[i](j))
 
     async def set_proxy(self, proxy: str | None, proxy_tiktok: str | None):
         if isinstance(proxy, str):
@@ -1025,13 +1060,11 @@ class Parameter:
         return browser_info | new_info
 
     def set_browser_info(self, browser_info: dict, browser_info_tiktok: dict):
-        self.impersonate = browser_info.pop(
-            "impersonate",
-            IMPERSONATE,
+        self.impersonate = (
+            browser_info.pop("impersonate", "") or self.impersonate
         )
-        self.impersonate_tiktok = browser_info_tiktok.pop(
-            "impersonate",
-            IMPERSONATE,
+        self.impersonate_tiktok = (
+            browser_info_tiktok.pop("impersonate", "") or self.impersonate_tiktok
         )
         self.user_agent = get_ua_sync(self.impersonate)
         self.user_agent_tiktok = get_ua_sync(self.impersonate_tiktok)

@@ -27,6 +27,7 @@ class OwnerUrl(BaseModel):
 
 
 class BrowserInfo(BaseModel):
+    impersonate: str = ""
     User_Agent: str = Field(
         default="",
         alias="User-Agent",
@@ -44,6 +45,7 @@ class BrowserInfo(BaseModel):
 
 
 class TikTokBrowserInfo(BaseModel):
+    impersonate: str = ""
     User_Agent: str = Field(
         "",
         alias="User-Agent",
@@ -88,9 +90,12 @@ class Settings(BaseModel):
     proxy_tiktok: str | None = None
     twc_tiktok: str | None = None
     download: bool | None = None
+    transcribe: bool | None = None
+    transcription_model: str | None = None
+    transcription_language: str | None = None
     max_size: int | None = None
     chunk: int | None = None
-    timeout: int | None = None
+    timeout: int | float | None = None
     max_retry: int | None = None
     max_pages: int | None = None
     run_command: str | None = None

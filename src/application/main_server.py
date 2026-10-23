@@ -148,7 +148,11 @@ class APIServer(TikTok):
         async def handle_settings(
             extract: Settings, token: str = Depends(token_dependency)
         ):
-            await self.parameter.set_settings_data(extract.model_dump())
+            # exclude_unset：只应用请求中显式传入的字段，
+            # 避免模型默认值（如空 cookie、空列表）覆盖已有配置
+            await self.parameter.set_settings_data(
+                extract.model_dump(exclude_unset=True)
+            )
             return Settings(**self.parameter.get_settings_data())
 
         @self.server.get(
